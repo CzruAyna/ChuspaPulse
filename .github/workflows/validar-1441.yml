@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   senales:
     name: Senales y formato (${{ matrix.os }})
@@ -78,3 +82,15 @@ jobs:
             full-*.log
             build/full-results.xml
           if-no-files-found: warn
+      - name: Mostrar errores de la compilacion o la suite
+        if: failure()
+        run: |
+          for log in full-configure.log full-build.log full-tests.log; do
+            if [ -f "$log" ]; then
+              error=$(grep -Ei 'CMake Error|error:|No tests were found' "$log" | head -6 || true)
+              if [ -n "$error" ]; then
+                error=$(printf '%s' "$error" | tr '\n' ' ' | sed 's/%/%25/g')
+                printf '::error title=%s::%s\n' "$log" "$error"
+              fi
+            fi
+          done
