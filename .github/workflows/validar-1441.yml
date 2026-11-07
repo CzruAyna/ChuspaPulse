@@ -1,0 +1,80 @@
+name: Validacion especifica y base de Pulse 1441
+
+on:
+  push:
+    branches: [codex/validar-1441]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  senales:
+    name: Senales y formato (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar herramientas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ clang-format
+      - name: Comprobar formato del archivo de la issue
+        run: clang-format --dry-run --Werror src/utils/signal_handler.cpp
+      - name: Configurar pruebas especificas en C++17 estricto
+        run: cmake -S .validation/1441 -B build-signals -G Ninja -DPULSE_SOURCE="$GITHUB_WORKSPACE/src/utils/signal_handler.cpp" -DCMAKE_BUILD_TYPE=Release
+      - name: Compilar pruebas con advertencias como errores
+        run: cmake --build build-signals --parallel 2
+      - name: Probar senales reales, hilos y compatibilidad
+        run: ctest --test-dir build-signals --output-on-failure --no-tests=error --output-junit resultados-1441.xml
+      - name: Guardar resultados especificos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: senales-${{ matrix.os }}
+          path: build-signals/resultados-1441.xml
+          if-no-files-found: warn
+
+  proyecto-completo:
+    name: Proyecto completo (${{ matrix.version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: base-sin-cambios
+            ref: '5303118cca05d1ae9df8bd428dae657218d43633'
+          - version: feature-1441
+            ref: '3e998f356dca56a688d5589f4793dfa25c83a4a0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+      - name: Instalar dependencias del CI oficial
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtest-dev libsqlite3-dev
+      - name: Generar version.hpp como el CI oficial
+        run: |
+          mkdir -p src/core
+          printf '#ifndef CHUSPAPULSE_VERSION_HPP\n#define CHUSPAPULSE_VERSION_HPP\n#define CHUSPAPULSE_VERSION "0.1.0"\n#endif\n' > src/core/version.hpp
+      - name: Configurar proyecto completo sin ocultar fallos
+        run: cmake -S . -B build -DBUILD_TESTS=ON -DCMAKE_CXX_FLAGS="-Wall -Wextra" 2>&1 | tee full-configure.log
+      - name: Compilar proyecto completo sin ocultar fallos
+        run: cmake --build build --parallel 2 2>&1 | tee full-build.log
+      - name: Ejecutar suite completa sin aceptar cero pruebas
+        run: ctest --test-dir build --output-on-failure --no-tests=error --output-junit full-results.xml 2>&1 | tee full-tests.log
+      - name: Guardar evidencia de base y feature
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: completo-${{ matrix.version }}
+          path: |
+            full-*.log
+            build/full-results.xml
+          if-no-files-found: warn
